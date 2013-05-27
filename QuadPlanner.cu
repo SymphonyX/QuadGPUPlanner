@@ -46,9 +46,9 @@ __device__ int stateNeedsUpdate(QuadStruct* state) {
 	return state->g == STARTING_VALUE || state->g == GOAL_VALUE;
 }
 
-/*__device__ int stateIsObstacle(StateStruct* state) {
+__device__ int stateIsObstacle(QuadStruct* state) {
 	return state->costToReach > 10.0f;
-}*/
+}
 
 __device__ int QisGoalState(QuadStruct* state) {
 	return state->g == 0.0f;
@@ -57,15 +57,14 @@ __device__ int QisGoalState(QuadStruct* state) {
 //Kernel function for planner
 
 __global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *texture_copy, HashMap<int, QuadStruct> *hashmap, int numberOfQuads, int *check, int *locality, int agentCount, QuadStruct* agents, float maxCost, bool allAgentsReached) {
-	int id = threadIdx.x;
-
+	int id = get_thread_id();
 
 	if (id < numberOfQuads) {
 		QuadStruct *quad = &current_texture[id];
 
 		//if(!stateIsObstacle(state) && !isGoalState(state)) {
 			//if the state is an obstacle, do not compute neighbors
-		if(!QisGoalState(quad)) {
+		if (!stateIsObstacle(quad) && !QisGoalState(quad)) {
 			int neighborIndexes[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 			neighborsForQuadDev(neighborIndexes, quad, hashmap);
 
@@ -73,8 +72,8 @@ __global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *tex
 			for (int i = 0; i < quad->neighborCount; ++i) {
 				QuadStruct *neighbor = &texture_copy[neighborIndexes[i]]; //Needs to find a quad in the ro map
 
-				//if (stateIsObstacle(neighbor)) //if neighbor is an obstacle, do not use it as a possible neighbor
-					//continue;
+				if (stateIsObstacle(neighbor)) //if neighbor is an obstacle, do not use it as a possible neighbor
+					continue;
 				float newg = neighbor->g + distance(neighbor, quad) + quad->costToReach;
 				if ((newg < quad->g || stateNeedsUpdate(quad)) && !stateNeedsUpdate(neighbor)) {
 					predecesorIndex = neighbor->indexInMap;
@@ -144,8 +143,8 @@ extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int loc
 	int blockLength = sqrt((double)BLOCK_SIZE); 
 	int gridLength = ceil((double)numberOfQuads/(double)blockLength);
 	
-	dim3 blocks(1, 1, 1);
-	dim3 threads(numberOfQuads, 1, 1);
+	dim3 blocks(gridLength, gridLength, 1);
+	dim3 threads(blockLength, blockLength, 1);
 	
 	QuadStruct *texture_device, *texture_device_copy;
 	cudaMalloc((void**)&texture_device, (numberOfQuads)*sizeof(QuadStruct));
@@ -309,7 +308,10 @@ extern "C" void neighborsForQuad(QuadStruct* quad, QuadStruct* neighbors)
 }
 
 
-
+extern "C" void cleanupDevice()
+{
+	cudaDeviceReset();
+}
 
 
 

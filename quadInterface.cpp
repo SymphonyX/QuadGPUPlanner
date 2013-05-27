@@ -19,6 +19,7 @@ QuadStruct test;
 extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads);
 extern "C" QuadStruct* quadForCode(int code);
 extern "C" void neighborsForQuad(QuadStruct* quad, QuadStruct* neighbors);
+extern "C" void cleanupDevice();
 
 extern "C" void QcomputeCostsCuda(QuadStruct* mapTexture, int numberOfQuads, int locality, int agentsNumber, QuadStruct* agents);
 extern "C" void clearTextureValuesQuad(QuadStruct* mapTexture, int numberOfQuads);
@@ -151,4 +152,9 @@ extern "C" EXPORT void quadIn(QuadStruct quad)
 extern "C" EXPORT void quadOut(QuadStruct* quad)
 {
 	*quad = test;
+}
+
+extern "C" EXPORT void cleanup()
+{
+	cleanupDevice();
 }
