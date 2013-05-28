@@ -65,7 +65,7 @@ __global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *tex
 		//if(!stateIsObstacle(state) && !isGoalState(state)) {
 			//if the state is an obstacle, do not compute neighbors
 		if (!stateIsObstacle(quad) && !QisGoalState(quad)) {
-			int neighborIndexes[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+			int neighborIndexes[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 			neighborsForQuadDev(neighborIndexes, quad, hashmap);
 
 			int predecesorIndex;
@@ -248,7 +248,7 @@ __global__ void populateHashMap(HashMap<int, QuadStruct> *hash,  QuadStruct *qua
 
 extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads)
 {
-	hashmap = CreateHashMap<int,QuadStruct, HashFunc<int> >(1, numberOfQuads);
+	hashmap = CreateHashMap<int,QuadStruct, HashFunc<int> >(ceil((double)numberOfQuads/10), numberOfQuads);
 	cudaError err = cudaGetLastError();
 	int blocks = ceil((double)numberOfQuads/512);
 
@@ -380,12 +380,14 @@ __device__ QuadStruct* greaterNeighbor(QuadStruct quad, int neighborQuadCode, Ha
 	return neighbor;
 }
 
-__device__ void populateSmallerNeighbors(QuadStruct* quad, QuadStruct* neighbors, int quadCode, int addCode1, int addCode2, HashMap<int, QuadStruct> *hashmap, int indexOffset)
+__device__ void populateSmallerNeighbors(QuadStruct* quad, QuadStruct* neighbors, int quadCode, int addCode1, int addCode2, HashMap<int, QuadStruct> *hashmap, int *indexOffset)
 {
 	QuadStruct* neighbor = (*hashmap).valueForKey(quadCode);
 
 	if (neighbor != NULL) {
-		neighbors[indexOffset] = *neighbor;
+		QuadStruct q = *neighbor;
+		neighbors[*indexOffset] = q;
+		*indexOffset += 1;
 		quad->neighborCount += 1;
 	} else {
 		int *codes = (int*)malloc(sizeof(int)*(16));
@@ -394,11 +396,13 @@ __device__ void populateSmallerNeighbors(QuadStruct* quad, QuadStruct* neighbors
 		int lastIndex = 2;
 		for (int i = 0; i < lastIndex; i++) {
 			int code = codes[i];
-			if (code/1000000 > 0) { continue; }
+			if (code/100000 > 0) { continue; }
 
 			QuadStruct* subNeighbor = (*hashmap).valueForKey(code);
 			if (subNeighbor != NULL) {
-				neighbors[indexOffset++] = *subNeighbor;
+				QuadStruct q = *subNeighbor;
+				neighbors[*indexOffset] = q;
+				*indexOffset += 1;
 				quad->neighborCount += 1;
 			} else {
 				codes[lastIndex] = (code*10) + addCode1;
@@ -417,10 +421,10 @@ __device__ QuadStruct* smallerNeighbors(QuadStruct* quad, int neighborQuadCode, 
 	int neighborCode2 = (neighborQuadCode*10) + addCode2;
 
 	int currentNeighbors = quad->neighborCount;
-	int indexOffset = 0;
+	int *indexOffset = (int*)malloc(sizeof(int));
+	*indexOffset = 0;
 	populateSmallerNeighbors(quad, neighbors, neighborCode1, addCode1, addCode2, hashmap, indexOffset);
 
-	indexOffset = quad->neighborCount - currentNeighbors;
 	populateSmallerNeighbors(quad, neighbors, neighborCode2, addCode1, addCode2, hashmap, indexOffset);
 
 	return neighbors;
@@ -431,10 +435,12 @@ __device__ void retrieveNeighbors(int* neighbors, QuadStruct* quad, int max_i, H
 	int neighborCode = constructNeighborQuadCode(quad, max_i, codeDiff);
 	QuadStruct* neighborQuads = (*hashmap).valueForKey(neighborCode);
 	int startingNeighborCount = quad->neighborCount;
+	bool freeMem = false;
 	if (neighborQuads == NULL) {
 		neighborQuads = greaterNeighbor(*quad, neighborCode, hashmap);
 		if (neighborQuads == NULL) {
 			neighborQuads = smallerNeighbors(quad, neighborCode, addCode1, addCode2, hashmap);
+			freeMem = true;
 		} else {
 			quad->neighborCount += 1;
 		}
@@ -451,6 +457,9 @@ __device__ void retrieveNeighbors(int* neighbors, QuadStruct* quad, int max_i, H
 			diff--;
 			if (diff == 0) { break;}
 		}
+	}
+	if (freeMem) {
+	free(neighborQuads);
 	}
 }
 
