@@ -84,7 +84,6 @@ extern "C" EXPORT void insertGoalQuad(int code, float cost, int mapNumber) {
 extern "C" EXPORT void insertStartQuad(int code, float cost, int agentNumber, int mapNumber) {
 	QuadStruct *startState = (QuadStruct*)malloc(sizeof(QuadStruct));
 	getQuadForCode(startState, code); 
-	QmapTexture[startState->indexInMap].g[mapNumber] = -3.0f;
 	QAgents[mapNumber][agentNumber] = *startState;
 }
 

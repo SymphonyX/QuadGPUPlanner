@@ -64,7 +64,7 @@ __global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *tex
 
 		//if(!stateIsObstacle(state) && !isGoalState(state)) {
 			//if the state is an obstacle, do not compute neighbors
-		if (!stateIsObstacle(quad) && !QisGoalState(quad, goalNumber)) {
+		if (!QisGoalState(quad, goalNumber)) {
 			int neighborIndexes[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 			neighborsForQuadDev(neighborIndexes, quad, hashmap);
 
