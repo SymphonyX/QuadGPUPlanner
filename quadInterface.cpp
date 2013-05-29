@@ -10,9 +10,8 @@ using namespace std;
 #define EXPORT __declspec(dllexport)
 #define CALL __stdcall
 
-QuadStruct *QGoals;
 QuadStruct *QmapTexture, **QAgents;
-int quadCount, QgoalCount, Qmaps, lastTextureIndex;
+int quadCount, Qmaps, lastTextureIndex;
 vector<int> QagentCount;
 QuadStruct test;
 
@@ -22,7 +21,7 @@ extern "C" void neighborsForQuad(QuadStruct* quad, QuadStruct* neighbors);
 extern "C" void cleanupDevice();
 
 extern "C" void QcomputeCostsCuda(QuadStruct* mapTexture, int numberOfQuads, int locality, int agentsNumber, QuadStruct* agents, int goalNumber);
-extern "C" void clearTextureValuesQuad(QuadStruct* mapTexture, int numberOfQuads);
+extern "C" void clearTextureValuesQuad(QuadStruct* mapTexture, int numberOfQuads, int goalNumber);
 extern "C" EXPORT void generateTextureQuads(int _quadCount, int _maps, QuadStruct quads[]);
 
 extern "C" EXPORT void initQuadHashMap(QuadStruct quads[], int numberOfQuads, int numberOfMaps)
@@ -76,13 +75,6 @@ extern "C" EXPORT void CALL getNeighborsForQuadCuda(QuadStruct* quad, QuadStruct
 	QagentCount.push_back(agents);
 }
 
-extern "C" EXPORT void allocGoalsMemQuad(int goals)
-{
-	free(QGoals);
-	QGoals = (QuadStruct*)malloc(goals*sizeof(QuadStruct));
-	QgoalCount = goals;
-}
-
 extern "C" EXPORT void insertGoalQuad(int code, float cost, int mapNumber) {
 	QuadStruct *goalState = (QuadStruct*)malloc(sizeof(QuadStruct)); 
 	getQuadForCode(goalState, code);
@@ -119,6 +111,11 @@ extern "C" EXPORT void computeCostsSubOptimalQuad(int mapNumber) {
 
 extern "C" EXPORT void computeCostsOptimalQuad(int mapNumber) {
 	QcomputeCostsCuda(QmapTexture, quadCount, 1, QagentCount[mapNumber], QAgents[mapNumber], mapNumber);
+}
+
+extern "C" EXPORT void updateAfterGoalMovementQuad(int goalNumber)
+{
+	clearTextureValuesQuad(QmapTexture, quadCount, goalNumber);
 }
 
 extern "C" EXPORT void quadIn(QuadStruct quad)

@@ -223,7 +223,7 @@ __global__ void clearTextureValuesKernel(QuadStruct* texture, int numberOfQuads,
 
 }
 
-extern "C" void QclearTextureValues(QuadStruct* texture, int numberOfQuads, int goalNumber) {
+extern "C" void clearTextureValuesQuad(QuadStruct* texture, int numberOfQuads, int goalNumber) {
 	QuadStruct* texture_dev;
 	int blockLength = sqrt((double)BLOCK_SIZE); 
 	int gridLength = ceil((double)numberOfQuads/(double)blockLength);
