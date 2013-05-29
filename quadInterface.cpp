@@ -11,7 +11,7 @@ using namespace std;
 #define CALL __stdcall
 
 QuadStruct *QGoals;
-QuadStruct **QmapTexture, **QAgents;
+QuadStruct *QmapTexture, **QAgents;
 int quadCount, QgoalCount, Qmaps, lastTextureIndex;
 vector<int> QagentCount;
 QuadStruct test;
@@ -21,7 +21,7 @@ extern "C" QuadStruct* quadForCode(int code);
 extern "C" void neighborsForQuad(QuadStruct* quad, QuadStruct* neighbors);
 extern "C" void cleanupDevice();
 
-extern "C" void QcomputeCostsCuda(QuadStruct* mapTexture, int numberOfQuads, int locality, int agentsNumber, QuadStruct* agents);
+extern "C" void QcomputeCostsCuda(QuadStruct* mapTexture, int numberOfQuads, int locality, int agentsNumber, QuadStruct* agents, int goalNumber);
 extern "C" void clearTextureValuesQuad(QuadStruct* mapTexture, int numberOfQuads);
 extern "C" EXPORT void generateTextureQuads(int _quadCount, int _maps, QuadStruct quads[]);
 
@@ -34,7 +34,7 @@ extern "C" EXPORT void initQuadHashMap(QuadStruct quads[], int numberOfQuads, in
 extern "C" EXPORT void getPredecessorCodeForCode(int code, int mapNumber, int* pred)
 {
 	QuadStruct *quad = quadForCode(code);
-	*pred = QmapTexture[mapNumber][quad->indexInMap].prevQuadCode;
+	*pred = QmapTexture[quad->indexInMap].prevQuadCode[mapNumber];
 }
 
 extern "C" EXPORT void getQuadForCode(QuadStruct* outQuad, int code)
@@ -44,10 +44,10 @@ extern "C" EXPORT void getQuadForCode(QuadStruct* outQuad, int code)
 	outQuad->minx = quad->minx;
 	outQuad->maxz = quad->maxz;
 	outQuad->minz = quad->minz;
-	outQuad->g = quad->g;
+	*(outQuad->g) = *(quad->g);
 	outQuad->costToReach = quad->costToReach;
 	outQuad->inconsistent = quad->inconsistent;
-	outQuad->prevQuadCode = quad->prevQuadCode;
+	*(outQuad->prevQuadCode) = *(quad->prevQuadCode);
 	outQuad->quadCode = quad->quadCode;
 	outQuad->neighborCount = quad->neighborCount;
 	outQuad->indexInMap = quad->indexInMap;
@@ -86,62 +86,39 @@ extern "C" EXPORT void allocGoalsMemQuad(int goals)
 extern "C" EXPORT void insertGoalQuad(int code, float cost, int mapNumber) {
 	QuadStruct *goalState = (QuadStruct*)malloc(sizeof(QuadStruct)); 
 	getQuadForCode(goalState, code);
-	goalState->g = 0.0f;
-	goalState->costToReach = cost;
-	QmapTexture[mapNumber][goalState->indexInMap] = *goalState;
+	QmapTexture[goalState->indexInMap].g[mapNumber] = 0.0f;
 }
 
 extern "C" EXPORT void insertStartQuad(int code, float cost, int agentNumber, int mapNumber) {
 	QuadStruct *startState = (QuadStruct*)malloc(sizeof(QuadStruct));
 	getQuadForCode(startState, code); 
-	startState->g = -3.0f;
-	startState->costToReach = cost;
-	QmapTexture[mapNumber][startState->indexInMap] = *startState;
+	QmapTexture[startState->indexInMap].g[mapNumber] = -3.0f;
 	QAgents[mapNumber][agentNumber] = *startState;
 }
 
 extern "C" EXPORT void generateTextureQuads(int _quadCount, int _maps, QuadStruct quads[]) {
-	for (int index = 0; index < Qmaps; index++) 
-	{
-		free(QmapTexture[index]);
-	}
-	Qmaps = _maps;
-	quadCount = _quadCount;
-	QmapTexture = (QuadStruct**) malloc(sizeof(QuadStruct*)*Qmaps);
-	size_t mapTextureSize = (quadCount*sizeof(QuadStruct));
+	free(QmapTexture);
 
-	for (int index = 0; index < Qmaps; index++) {
-		QmapTexture[index] = (QuadStruct*) malloc(mapTextureSize);
-		for (int j = 0; j < quadCount; j++) {
-			quads[j].indexInMap = j;
-			QmapTexture[index][j] = quads[j];
-		}
+	quadCount = _quadCount;
+	size_t mapTextureSize = (quadCount*sizeof(QuadStruct));
+	QmapTexture = (QuadStruct*) malloc(mapTextureSize);
+
+	for (int j = 0; j < quadCount; j++) {
+		quads[j].indexInMap = j;
+		QmapTexture[j] = quads[j];
 	}
 }
 
 extern "C" EXPORT void computeCostsMinIndexQuad(int mapNumber) {
-	QcomputeCostsCuda(QmapTexture[mapNumber], quadCount, 2, QagentCount[mapNumber], QAgents[mapNumber]);
+	QcomputeCostsCuda(QmapTexture, quadCount, 2, QagentCount[mapNumber], QAgents[mapNumber], mapNumber);
 }
 
 extern "C" EXPORT void computeCostsSubOptimalQuad(int mapNumber) {
-	QcomputeCostsCuda(QmapTexture[mapNumber], quadCount, 0, QagentCount[mapNumber], QAgents[mapNumber]);
+	QcomputeCostsCuda(QmapTexture, quadCount, 0, QagentCount[mapNumber], QAgents[mapNumber], mapNumber);
 }
 
 extern "C" EXPORT void computeCostsOptimalQuad(int mapNumber) {
-	QcomputeCostsCuda(QmapTexture[mapNumber], quadCount, 1, QagentCount[mapNumber], QAgents[mapNumber]);
-}
-
-extern "C" EXPORT void insertValuesInMapQuad(int quadCode, float g, float cost, bool inconsistent, int index, int mapNumber, float minx, float maxx, float minz, float maxz) {
-	QmapTexture[mapNumber][index].g = g;
-	QmapTexture[mapNumber][index].costToReach = cost;
-	QmapTexture[mapNumber][index].inconsistent = inconsistent;
-	QmapTexture[mapNumber][index].minx = minx;
-	QmapTexture[mapNumber][index].maxx = maxx;
-	QmapTexture[mapNumber][index].minz = minz;
-	QmapTexture[mapNumber][index].maxz = maxz;
-	QmapTexture[mapNumber][index].quadCode = quadCode;
-	QmapTexture[mapNumber][index].indexInMap = index;
-	QmapTexture[mapNumber][index].neighborCount = 0;
+	QcomputeCostsCuda(QmapTexture, quadCount, 1, QagentCount[mapNumber], QAgents[mapNumber], mapNumber);
 }
 
 extern "C" EXPORT void quadIn(QuadStruct quad)

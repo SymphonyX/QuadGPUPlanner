@@ -6,12 +6,12 @@ struct QuadStruct {
 	float maxx;
 	float minz;
 	float maxz;
-	float g;
+	float g[10];
 	float costToReach;
 	bool inconsistent;
 	int indexInMap;
 	int quadCode;
-	int prevQuadCode;
+	int prevQuadCode[10];
 	int neighborCount;
 };
 

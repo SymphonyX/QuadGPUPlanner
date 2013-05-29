@@ -42,21 +42,21 @@ __device__ float distance(QuadStruct *from, QuadStruct *to) {
 	}
 }
 
-__device__ int stateNeedsUpdate(QuadStruct* state) {
-	return state->g == STARTING_VALUE || state->g == GOAL_VALUE;
+__device__ int stateNeedsUpdate(QuadStruct* state, int goalNumber) {
+	return state->g[goalNumber] == STARTING_VALUE || state->g[goalNumber] == GOAL_VALUE;
 }
 
 __device__ int stateIsObstacle(QuadStruct* state) {
 	return state->costToReach > 10.0f;
 }
 
-__device__ int QisGoalState(QuadStruct* state) {
-	return state->g == 0.0f;
+__device__ int QisGoalState(QuadStruct* state, int goalNumber) {
+	return state->g[goalNumber] == 0.0f;
 }
 
 //Kernel function for planner
 
-__global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *texture_copy, HashMap<int, QuadStruct> *hashmap, int numberOfQuads, int *check, int *locality, int agentCount, QuadStruct* agents, float maxCost, bool allAgentsReached) {
+__global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *texture_copy, HashMap<int, QuadStruct> *hashmap, int numberOfQuads, int *check, int *locality, int agentCount, QuadStruct* agents, float maxCost, bool allAgentsReached, int goalNumber) {
 	int id = get_thread_id();
 
 	if (id < numberOfQuads) {
@@ -64,7 +64,7 @@ __global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *tex
 
 		//if(!stateIsObstacle(state) && !isGoalState(state)) {
 			//if the state is an obstacle, do not compute neighbors
-		if (!stateIsObstacle(quad) && !QisGoalState(quad)) {
+		if (!stateIsObstacle(quad) && !QisGoalState(quad, goalNumber)) {
 			int neighborIndexes[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 			neighborsForQuadDev(neighborIndexes, quad, hashmap);
 
@@ -74,15 +74,15 @@ __global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *tex
 
 				if (stateIsObstacle(neighbor)) //if neighbor is an obstacle, do not use it as a possible neighbor
 					continue;
-				float newg = neighbor->g + distance(neighbor, quad) + quad->costToReach;
-				if ((newg < quad->g || stateNeedsUpdate(quad)) && !stateNeedsUpdate(neighbor)) {
+				float newg = neighbor->g[goalNumber] + distance(neighbor, quad) + quad->costToReach;
+				if ((newg < quad->g[goalNumber] || stateNeedsUpdate(quad, goalNumber)) && !stateNeedsUpdate(neighbor, goalNumber)) {
 					predecesorIndex = neighbor->indexInMap;
-					quad->prevQuadCode = neighbor->quadCode;
-					quad->g = newg;
+					quad->prevQuadCode[goalNumber] = neighbor->quadCode;
+					quad->g[goalNumber] = newg;
 					if (*locality == 1) {
 						*check = 0;
 					} else if (*locality == 2) {
-						if (quad->g < maxCost || !allAgentsReached) {
+						if (quad->g[goalNumber] < maxCost || !allAgentsReached) {
 							*check = 0;
 						}
 					} else if (*locality == 0 && allAgentsReached) {
@@ -115,21 +115,21 @@ __global__ void checkForInconsistency(QuadStruct* texture, int numberOfQuads, in
 	}
 }
 
-float agentsMaxCost(QuadStruct* texture, int agentCount, QuadStruct* agents) {
+float agentsMaxCost(QuadStruct* texture, int agentCount, QuadStruct* agents, int goalNumber) {
 	float maxCost = -10000.0f;
 	for (int i = 0; i < agentCount; i++)  {
 		QuadStruct agent = texture[agents[i].indexInMap];
-		if (agent.g > maxCost) {
-			maxCost = agent.g;
+		if (agent.g[goalNumber] > maxCost) {
+			maxCost = agent.g[goalNumber];
 		}
 	}
 	return maxCost;
 }
 
-bool agentsReached(QuadStruct* texture, int agentCount, QuadStruct* agents) {
+bool agentsReached(QuadStruct* texture, int agentCount, QuadStruct* agents, int goalNumber) {
 	for (int i = 0; i < agentCount; i++) {
 		QuadStruct agent = texture[agents[i].indexInMap];
-		if (agent.g < 0.0f) {
+		if (agent.g[goalNumber] < 0.0f) {
 			return false;
 		}
 	}
@@ -137,7 +137,7 @@ bool agentsReached(QuadStruct* texture, int agentCount, QuadStruct* agents) {
 }
 
 
-extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int locality, int agentCount, QuadStruct* agents) {
+extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int locality, int agentCount, QuadStruct* agents, int goalNumber) {
 	int *locality_dev, *consistencyCheck, *consistencyCheck_dev, *flag, *flag_dev;
 	
 	int blockLength = sqrt((double)BLOCK_SIZE); 
@@ -181,12 +181,12 @@ extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int loc
 		cudaMemcpy(consistencyCheck_dev, consistencyCheck, sizeof(int), cudaMemcpyHostToDevice);
 		cudaMemcpy(flag_dev, flag, sizeof(int), cudaMemcpyHostToDevice);
 
-		bool allAgentsReached = agentsReached(texture, agentCount, agents);
+		bool allAgentsReached = agentsReached(texture, agentCount, agents, goalNumber);
 		float maxCost;
 		if (allAgentsReached) {
-			maxCost = agentsMaxCost(texture, agentCount, agents);
+			maxCost = agentsMaxCost(texture, agentCount, agents, goalNumber);
 		}
-		QcomputeCostsKernel<<<blocks, threads>>>(texture_device, texture_device_copy, hashmap, numberOfQuads, consistencyCheck_dev, locality_dev, agentCount, agents_device, maxCost, allAgentsReached);
+		QcomputeCostsKernel<<<blocks, threads>>>(texture_device, texture_device_copy, hashmap, numberOfQuads, consistencyCheck_dev, locality_dev, agentCount, agents_device, maxCost, allAgentsReached, goalNumber);
 		
 		checkForInconsistency<<<blocks, threads>>>(texture_device, numberOfQuads, flag_dev);
 		
@@ -210,20 +210,20 @@ extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int loc
 	return 1;
 }
 
-__global__ void clearTextureValuesKernel(QuadStruct* texture, int numberOfQuads) {
+__global__ void clearTextureValuesKernel(QuadStruct* texture, int numberOfQuads, int goalNumber) {
 	int id = get_thread_id();
 
 	if (id < numberOfQuads) {
 		QuadStruct* state = &texture[id];
-		state->g = STARTING_VALUE;
-		state->prevQuadCode = 0;
+		state->g[goalNumber] = STARTING_VALUE;
+		state->prevQuadCode[goalNumber] = 0;
 		state->inconsistent = false;
 		state->neighborCount = 0;
 	}
 
 }
 
-extern "C" void QclearTextureValues(QuadStruct* texture, int numberOfQuads) {
+extern "C" void QclearTextureValues(QuadStruct* texture, int numberOfQuads, int goalNumber) {
 	QuadStruct* texture_dev;
 	int blockLength = sqrt((double)BLOCK_SIZE); 
 	int gridLength = ceil((double)numberOfQuads/(double)blockLength);
@@ -232,7 +232,7 @@ extern "C" void QclearTextureValues(QuadStruct* texture, int numberOfQuads) {
 
 	cudaMalloc((void**)&texture_dev, (numberOfQuads*sizeof(QuadStruct)));
 	cudaMemcpy(texture_dev, texture, numberOfQuads*sizeof(QuadStruct), cudaMemcpyHostToDevice);
-	clearTextureValuesKernel<<<blocks, threads>>> (texture_dev, numberOfQuads);
+	clearTextureValuesKernel<<<blocks, threads>>> (texture_dev, numberOfQuads, goalNumber);
 	cudaMemcpy(texture, texture_dev, (numberOfQuads)*sizeof(QuadStruct), cudaMemcpyDeviceToHost);
 
 	cudaFree(texture_dev);
