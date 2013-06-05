@@ -2,16 +2,14 @@
 #define STRUCTS_H
 
 struct QuadStruct {
-	float minx;
-	float maxx;
-	float minz;
-	float maxz;
-	float g[10];
+	float centerx;
+	float centery;
+	float g;
 	float costToReach;
 	bool inconsistent;
 	int indexInMap;
 	int quadCode;
-	int prevQuadCode[10];
+	int prevQuadCode;
 	int neighborCount;
 };
 

@@ -4,17 +4,21 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "hash_map_template.h"
+#include "cuda_profiler_api.h"
  
 #define	STARTING_VALUE -1
 #define OBSTACLE_VALUE -2
 #define GOAL_VALUE -3
-#define BLOCK_SIZE 256
+#define NUM_NEIGH_PER_QUAD	20	
+#define BLOCK_SIZE 512
 //Defines Texture and its methods
 
 using namespace CUDASTL;
 
-HashMap<int, QuadStruct>* hashmap;
-__device__ void neighborsForQuadDev(int* neighbors, QuadStruct* quad, HashMap<int, QuadStruct> *hashmap);
+HashMap<int, int>* hashmap;
+int* neighborIndexesDev;
+
+__device__ void neighborsForQuadDev(int* neighbors, QuadStruct* quad, HashMap<int, int> *hashmap);
 
 __device__ bool equals(float x1, float x2)
 {
@@ -25,64 +29,93 @@ __device__ bool equals(float x1, float x2)
 }
 
 __device__ float distance(QuadStruct *from, QuadStruct *to) {
-	float fromx = (from->maxx+from->minx)/2;
-	float fromy = (from->maxz+from->minz)/2;
-	float tox = (to->maxx+to->minx)/2;
-	float toy = (to->maxz+to->minz)/2;
 	
-	if (equals(fromx,tox)) {
-		return fabs(toy - fromy);
+	if (equals(from->centerx,to->centerx)) {
+		return fabs(to->centery - from->centery);
 	}
-	else if(equals(fromy,toy)) {
-		return fabs(tox - fromx);
+	else if(equals(from->centery,to->centery)) {
+		return fabs(to->centerx - from->centerx);
 	}
 	else {
-		return sqrt(fabs(tox - fromx)*fabs(tox - fromx) +
-			fabs(toy - fromy)*fabs(toy - fromy));
+		return sqrt(fabs(to->centerx - from->centerx)*fabs(to->centerx - from->centerx) +
+			fabs(to->centery - from->centery)*fabs(to->centery - from->centery));
 	}
 }
 
-__device__ int stateNeedsUpdate(QuadStruct* state, int goalNumber) {
-	return state->g[goalNumber] == STARTING_VALUE || state->g[goalNumber] == GOAL_VALUE;
+__device__ int stateNeedsUpdate(QuadStruct* state) {
+	return state->g == STARTING_VALUE || state->g == GOAL_VALUE;
 }
 
 __device__ int stateIsObstacle(QuadStruct* state) {
 	return state->costToReach > 10.0f;
 }
 
-__device__ int QisGoalState(QuadStruct* state, int goalNumber) {
-	return state->g[goalNumber] == 0.0f;
+__device__ int QisGoalState(QuadStruct* state) {
+	return state->g == 0.0f;
 }
 
 //Kernel function for planner
 
-__global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *texture_copy, HashMap<int, QuadStruct> *hashmap, int numberOfQuads, int *check, int *locality, int agentCount, QuadStruct* agents, float maxCost, bool allAgentsReached, int goalNumber) {
+__global__ void computeNeighborsKernel(QuadStruct *current_texture, HashMap<int, int> *hashmap, int numberOfQuads, int* neighborIndexes)
+{
+	int id = get_thread_id();
+	if (id < numberOfQuads) {
+		QuadStruct quad = current_texture[id];
+		neighborsForQuadDev(&neighborIndexes[id*NUM_NEIGH_PER_QUAD], &quad, hashmap);
+		current_texture[id] = quad;
+	}
+}
+
+extern "C" void computeNeighbors(QuadStruct* texture, int numberOfQuads)
+{
+	int gridLength = ceil((double)numberOfQuads/(double)BLOCK_SIZE);
+	
+	dim3 blocks(gridLength, 1, 1);
+	dim3 threads(BLOCK_SIZE, 1, 1);
+	
+	QuadStruct *texture_device;
+	cudaMalloc((void**)&texture_device, (numberOfQuads)*sizeof(QuadStruct));
+	
+	//make a two copies of the initial map
+	cudaMemcpy(texture_device, texture, (numberOfQuads)*sizeof(QuadStruct), cudaMemcpyHostToDevice);
+
+	cudaMalloc((void**)&neighborIndexesDev, (numberOfQuads*NUM_NEIGH_PER_QUAD)*sizeof(int));
+	cudaMemset(neighborIndexesDev, -1, (numberOfQuads*NUM_NEIGH_PER_QUAD)*sizeof(int));
+
+	computeNeighborsKernel<<<blocks, threads>>>(texture_device, hashmap, numberOfQuads, neighborIndexesDev);
+
+	cudaMemcpy(texture, texture_device, (numberOfQuads)*sizeof(QuadStruct), cudaMemcpyDeviceToHost);
+	cudaFree(texture_device);
+}
+
+__global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *texture_copy, int* neighborIndexes, HashMap<int, int> *hashmap, int numberOfQuads, int *check, int *locality, float maxCost, bool allAgentsReached) {
 	int id = get_thread_id();
 
 	if (id < numberOfQuads) {
-		QuadStruct *quad = &current_texture[id];
+		QuadStruct quad = current_texture[id];
 
 		//if(!stateIsObstacle(state) && !isGoalState(state)) {
 			//if the state is an obstacle, do not compute neighbors
-		if (!QisGoalState(quad, goalNumber)) {
-			int neighborIndexes[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
-			neighborsForQuadDev(neighborIndexes, quad, hashmap);
+		if (!QisGoalState(&quad)) {
 
 			int predecesorIndex;
-			for (int i = 0; i < quad->neighborCount; ++i) {
-				QuadStruct *neighbor = &texture_copy[neighborIndexes[i]]; //Needs to find a quad in the ro map
+			for (int i = 0; i < NUM_NEIGH_PER_QUAD; ++i) {
+				int neighborIndex = neighborIndexes[(id*NUM_NEIGH_PER_QUAD)+i];
+				if (neighborIndex < 0) 
+					break;
+				QuadStruct neighbor = texture_copy[neighborIndex]; //Needs to find a quad in the ro map
 
-				if (stateIsObstacle(neighbor)) //if neighbor is an obstacle, do not use it as a possible neighbor
+				if (stateIsObstacle(&neighbor)) //if neighbor is an obstacle, do not use it as a possible neighbor
 					continue;
-				float newg = neighbor->g[goalNumber] + distance(neighbor, quad) + quad->costToReach;
-				if ((newg < quad->g[goalNumber] || stateNeedsUpdate(quad, goalNumber)) && !stateNeedsUpdate(neighbor, goalNumber)) {
-					predecesorIndex = neighbor->indexInMap;
-					quad->prevQuadCode[goalNumber] = neighbor->quadCode;
-					quad->g[goalNumber] = newg;
+				float newg = neighbor.g + distance(&neighbor, &quad) * quad.costToReach;
+				if ((newg < quad.g || stateNeedsUpdate(&quad)) && !stateNeedsUpdate(&neighbor)) {
+					predecesorIndex = neighbor.indexInMap;
+					quad.prevQuadCode = neighbor.quadCode;
+					quad.g = newg;
 					if (*locality == 1) {
 						*check = 0;
 					} else if (*locality == 2) {
-						if (quad->g[goalNumber] < maxCost || !allAgentsReached) {
+						if (quad.g < maxCost || !allAgentsReached) {
 							*check = 0;
 						}
 					} else if (*locality == 0 && allAgentsReached) {
@@ -101,6 +134,7 @@ __global__ void QcomputeCostsKernel(QuadStruct *current_texture, QuadStruct *tex
 				quad->g = STARTING_VALUE;
 			} */
 		}
+		current_texture[id] = quad;
 	}	
 }
 
@@ -119,8 +153,8 @@ float agentsMaxCost(QuadStruct* texture, int agentCount, QuadStruct* agents, int
 	float maxCost = -10000.0f;
 	for (int i = 0; i < agentCount; i++)  {
 		QuadStruct agent = texture[agents[i].indexInMap];
-		if (agent.g[goalNumber] > maxCost) {
-			maxCost = agent.g[goalNumber];
+		if (agent.g > maxCost) {
+			maxCost = agent.g;
 		}
 	}
 	return maxCost;
@@ -129,7 +163,7 @@ float agentsMaxCost(QuadStruct* texture, int agentCount, QuadStruct* agents, int
 bool agentsReached(QuadStruct* texture, int agentCount, QuadStruct* agents, int goalNumber) {
 	for (int i = 0; i < agentCount; i++) {
 		QuadStruct agent = texture[agents[i].indexInMap];
-		if (agent.g[goalNumber] < 0.0f) {
+		if (agent.g < 0.0f) {
 			return false;
 		}
 	}
@@ -140,23 +174,17 @@ bool agentsReached(QuadStruct* texture, int agentCount, QuadStruct* agents, int 
 extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int locality, int agentCount, QuadStruct* agents, int goalNumber) {
 	int *locality_dev, *consistencyCheck, *consistencyCheck_dev, *flag, *flag_dev;
 	
-	int blockLength = sqrt((double)BLOCK_SIZE); 
-	int gridLength = ceil((double)numberOfQuads/(double)blockLength);
+	int gridLength = ceil((double)numberOfQuads/(double)BLOCK_SIZE);
 	
-	dim3 blocks(gridLength, gridLength, 1);
-	dim3 threads(blockLength, blockLength, 1);
-	
+	dim3 blocks(gridLength, 1, 1);
+	dim3 threads(BLOCK_SIZE, 1, 1);
+
 	QuadStruct *texture_device, *texture_device_copy;
 	cudaMalloc((void**)&texture_device, (numberOfQuads)*sizeof(QuadStruct));
 	cudaMalloc((void**)&texture_device_copy, (numberOfQuads)*sizeof(QuadStruct));
 	//make a two copies of the initial map
 	cudaMemcpy(texture_device, texture, (numberOfQuads)*sizeof(QuadStruct), cudaMemcpyHostToDevice);
 	cudaMemcpy(texture_device_copy, texture, (numberOfQuads)*sizeof(QuadStruct), cudaMemcpyHostToDevice);
-
-	
-	QuadStruct *agents_device;
-	cudaMalloc((void**)&agents_device, (agentCount)*sizeof(QuadStruct));
-	cudaMemcpy(agents_device, agents, (agentCount)*sizeof(QuadStruct), cudaMemcpyHostToDevice);
 
 	cudaMalloc((void**)&locality_dev, sizeof(int));
 	int* locality_ptr = (int*)malloc(sizeof(int));
@@ -169,6 +197,7 @@ extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int loc
 	flag = (int*)malloc(sizeof(int));
 
 	int iterations = 0;
+
 	do {
 		//set flag to 0 to check for changes
 		if (locality == 1 || locality == 2) {
@@ -186,7 +215,7 @@ extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int loc
 		if (allAgentsReached) {
 			maxCost = agentsMaxCost(texture, agentCount, agents, goalNumber);
 		}
-		QcomputeCostsKernel<<<blocks, threads>>>(texture_device, texture_device_copy, hashmap, numberOfQuads, consistencyCheck_dev, locality_dev, agentCount, agents_device, maxCost, allAgentsReached, goalNumber);
+		QcomputeCostsKernel<<<blocks, threads>>>(texture_device, texture_device_copy, neighborIndexesDev, hashmap, numberOfQuads, consistencyCheck_dev, locality_dev, maxCost, allAgentsReached);
 		
 		checkForInconsistency<<<blocks, threads>>>(texture_device, numberOfQuads, flag_dev);
 		
@@ -202,7 +231,7 @@ extern "C" int QcomputeCostsCuda(QuadStruct* texture, int numberOfQuads, int loc
 	} while(*consistencyCheck == 0 || *flag == 1);
 
 	
-	cudaFree(texture_device); cudaFree(texture_device_copy); cudaFree(agents_device);
+	cudaFree(texture_device); cudaFree(texture_device_copy);
 
 	printf("Result was: %i\n\n", *consistencyCheck);
 	printf("Number of iterations: %i\n\n", iterations);
@@ -215,20 +244,19 @@ __global__ void clearTextureValuesKernel(QuadStruct* texture, int numberOfQuads,
 
 	if (id < numberOfQuads) {
 		QuadStruct* state = &texture[id];
-		state->g[goalNumber] = STARTING_VALUE;
-		state->prevQuadCode[goalNumber] = 0;
+		state->g = STARTING_VALUE;
+		state->prevQuadCode = 0;
 		state->inconsistent = false;
-		state->neighborCount = 0;
 	}
 
 }
 
 extern "C" void clearTextureValuesQuad(QuadStruct* texture, int numberOfQuads, int goalNumber) {
 	QuadStruct* texture_dev;
-	int blockLength = sqrt((double)BLOCK_SIZE); 
-	int gridLength = ceil((double)numberOfQuads/(double)blockLength);
-	dim3 blocks(gridLength, gridLength, 1);
-	dim3 threads(blockLength, blockLength, 1);
+
+	int gridLength = ceil((double)numberOfQuads/(double)BLOCK_SIZE);
+	dim3 blocks(gridLength, 1, 1);
+	dim3 threads(BLOCK_SIZE, 1, 1);
 
 	cudaMalloc((void**)&texture_dev, (numberOfQuads*sizeof(QuadStruct)));
 	cudaMemcpy(texture_dev, texture, numberOfQuads*sizeof(QuadStruct), cudaMemcpyHostToDevice);
@@ -238,17 +266,17 @@ extern "C" void clearTextureValuesQuad(QuadStruct* texture, int numberOfQuads, i
 	cudaFree(texture_dev);
 }
 
-__global__ void populateHashMap(HashMap<int, QuadStruct> *hash,  QuadStruct *quads, int numberOfQuads)
+__global__ void populateHashMap(HashMap<int, int> *hash,  QuadStruct *quads, int numberOfQuads)
 {
 	int i = get_thread_id();
 	if (i < numberOfQuads) {
-		(*hash)[quads[i].quadCode] = quads[i];
+		(*hash)[quads[i].quadCode] = quads[i].indexInMap;
 	}
 }
 
-extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads)
+extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads, int size)
 {
-	hashmap = CreateHashMap<int,QuadStruct, HashFunc<int> >(ceil((double)numberOfQuads/10), numberOfQuads);
+	hashmap = CreateHashMap<int,int, HashFunc<int> >(ceil((double)numberOfQuads/32), size);
 	cudaError err = cudaGetLastError();
 	int blocks = ceil((double)numberOfQuads/512);
 
@@ -263,53 +291,30 @@ extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads)
 	cudaFree(quads_dev);
 }
 
-__global__ void retrieveQuadStruct(QuadStruct* quad, int code, HashMap<int, QuadStruct> *hashmap)
+__global__ void retrieveQuadStruct(int* quad, int code, HashMap<int, int> *hashmap)
 {
 	int i = get_thread_id();
 	if (i == 1) {
-		QuadStruct q = *((*hashmap).valueForKey(code));
+		int q = *((*hashmap).valueForKey(code));
 		*quad = q; 
 	}
 }
 
-extern "C" QuadStruct *quadForCode(int code)
+extern "C" int *quadForCode(int code)
 {
-	QuadStruct *q_dev, *q;
-	q = (QuadStruct*)malloc(sizeof(QuadStruct));
-	cudaMalloc((void**)&q_dev, sizeof(QuadStruct));
+	int *q_dev, *q;
+	q = (int*)malloc(sizeof(int));
+	cudaMalloc((void**)&q_dev, sizeof(int));
 	
 	retrieveQuadStruct<<<1, 512>>> (q_dev, code, hashmap);
-	cudaMemcpy(q, q_dev, sizeof(QuadStruct), cudaMemcpyDeviceToHost);
+	cudaMemcpy(q, q_dev, sizeof(int), cudaMemcpyDeviceToHost);
 	cudaFree(q_dev);
 	return q;
 }
 
-
-__global__ void getNeighborsKernel(QuadStruct* neighbors, QuadStruct* quad, HashMap<int, QuadStruct> *hashmap)
-{
-//	neighborsForQuadDev(neighbors, quad, hashmap);
-}
-
-extern "C" void neighborsForQuad(QuadStruct* quad, QuadStruct* neighbors)
-{
-	QuadStruct *q_dev;
-	QuadStruct *neighbors_dev;
-
-	cudaMalloc((void**)&q_dev, sizeof(QuadStruct));
-	cudaMemcpy(q_dev, quad, sizeof(QuadStruct), cudaMemcpyHostToDevice);
-
-	cudaMalloc((void**)&neighbors_dev, sizeof(QuadStruct)*10);
-	
-	getNeighborsKernel<<<1, 1>>> (neighbors_dev, q_dev, hashmap);
-	cudaMemcpy(quad, q_dev, sizeof(QuadStruct), cudaMemcpyDeviceToHost);
-	cudaMemcpy(neighbors, neighbors_dev, sizeof(QuadStruct)*10, cudaMemcpyDeviceToHost);
-	cudaFree(q_dev);
-	cudaFree(neighbors_dev);
-}
-
-
 extern "C" void cleanupDevice()
 {
+	DestroyHashMap(hashmap);
 	cudaDeviceReset();
 }
 
@@ -359,11 +364,11 @@ __device__ int constructNeighborQuadCode(QuadStruct* quad, int max_i, int codeDi
 	return code;
 }
 
-__device__ QuadStruct* greaterNeighbor(QuadStruct quad, int neighborQuadCode, HashMap<int, QuadStruct> *hashmap)
+__device__ int* greaterNeighbor(QuadStruct quad, int neighborQuadCode, HashMap<int, int> *hashmap)
 {
 	int parsedCode = neighborQuadCode;
 
-	QuadStruct* neighbor = NULL;
+	int* neighbor = NULL;
 	while (parsedCode > 0)
 	{
 		if (parsedCode == neighborQuadCode) {
@@ -380,12 +385,12 @@ __device__ QuadStruct* greaterNeighbor(QuadStruct quad, int neighborQuadCode, Ha
 	return neighbor;
 }
 
-__device__ void populateSmallerNeighbors(QuadStruct* quad, QuadStruct* neighbors, int quadCode, int addCode1, int addCode2, HashMap<int, QuadStruct> *hashmap, int *indexOffset)
+__device__ void populateSmallerNeighbors(QuadStruct* quad, int* neighbors, int quadCode, int addCode1, int addCode2, HashMap<int, int> *hashmap, int *indexOffset)
 {
-	QuadStruct* neighbor = (*hashmap).valueForKey(quadCode);
+	int* neighbor = (*hashmap).valueForKey(quadCode);
 
 	if (neighbor != NULL) {
-		QuadStruct q = *neighbor;
+		int q = *neighbor;
 		neighbors[*indexOffset] = q;
 		*indexOffset += 1;
 		quad->neighborCount += 1;
@@ -398,9 +403,9 @@ __device__ void populateSmallerNeighbors(QuadStruct* quad, QuadStruct* neighbors
 			int code = codes[i];
 			if (code/100000 > 0) { continue; }
 
-			QuadStruct* subNeighbor = (*hashmap).valueForKey(code);
+			int* subNeighbor = (*hashmap).valueForKey(code);
 			if (subNeighbor != NULL) {
-				QuadStruct q = *subNeighbor;
+				int q = *subNeighbor;
 				neighbors[*indexOffset] = q;
 				*indexOffset += 1;
 				quad->neighborCount += 1;
@@ -413,9 +418,9 @@ __device__ void populateSmallerNeighbors(QuadStruct* quad, QuadStruct* neighbors
 	}
 }
 
-__device__ QuadStruct* smallerNeighbors(QuadStruct* quad, int neighborQuadCode, int addCode1, int addCode2, HashMap<int, QuadStruct> *hashmap)
+__device__ int* smallerNeighbors(QuadStruct* quad, int neighborQuadCode, int addCode1, int addCode2, HashMap<int, int> *hashmap)
 {
-	QuadStruct* neighbors = (QuadStruct*)malloc(sizeof(QuadStruct)*16);
+	int* neighbors = (int*)malloc(sizeof(int)*16);
 
 	int neighborCode1 = (neighborQuadCode*10) + addCode1;
 	int neighborCode2 = (neighborQuadCode*10) + addCode2;
@@ -430,10 +435,10 @@ __device__ QuadStruct* smallerNeighbors(QuadStruct* quad, int neighborQuadCode, 
 	return neighbors;
 }
 
-__device__ void retrieveNeighbors(int* neighbors, QuadStruct* quad, int max_i, HashMap<int, QuadStruct> *hashmap, int codeDiff, int addCode1, int addCode2)
+__device__ void retrieveNeighbors(int* neighbors, QuadStruct* quad, int max_i, HashMap<int, int> *hashmap, int codeDiff, int addCode1, int addCode2)
 {
 	int neighborCode = constructNeighborQuadCode(quad, max_i, codeDiff);
-	QuadStruct* neighborQuads = (*hashmap).valueForKey(neighborCode);
+	int* neighborQuads = (*hashmap).valueForKey(neighborCode);
 	int startingNeighborCount = quad->neighborCount;
 	bool freeMem = false;
 	if (neighborQuads == NULL) {
@@ -453,17 +458,17 @@ __device__ void retrieveNeighbors(int* neighbors, QuadStruct* quad, int max_i, H
 	for (int i = 0; i < quad->neighborCount; i++)
 	{
 		if (neighbors[i] < 0) {
-			neighbors[i] = neighborQuads[diff-1].indexInMap;
+			neighbors[i] = neighborQuads[diff-1];
 			diff--;
 			if (diff == 0) { break;}
 		}
 	}
 	if (freeMem) {
-	free(neighborQuads);
+		free(neighborQuads);
 	}
 }
 
-__device__ void neighborsForQuadDev(int* neighbors, QuadStruct* quad, HashMap<int, QuadStruct> *hashmap)
+__device__ void neighborsForQuadDev(int* neighbors, QuadStruct* quad, HashMap<int, int> *hashmap)
 {
 	short int Emax_i = 0;  short int Wmax_i = 0; short int Nmax_i = 0; short int Smax_i = 0;
 	short int length = 1;
