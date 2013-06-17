@@ -1,4 +1,4 @@
-﻿Build started 6/5/2013 2:56:10 PM.
+﻿Build started 6/17/2013 10:47:25 AM.
      1>Project "C:\CUDA Projects\QuadDLL\QuadDLL\QuadDLL.vcxproj" on node 2 (build target(s)).
      1>InitializeBuildStatus:
          Creating "Debug\QuadDLL.unsuccessfulbuild" because "AlwaysCreate" was specified.
@@ -8,24 +8,28 @@
        Skipping target "AddCudaCompilePropsDeps" because all output files are up-to-date with respect to the input files.
        CudaBuild:
          Compiling CUDA source file QuadPlanner.cu...
-         cmd.exe /C "C:\Users\Pancho\AppData\Local\Temp\47359e8ae3e04367b97f6922a4bd7229.cmd"
+         cmd.exe /C "C:\Users\Pancho\AppData\Local\Temp\c2f15947302a423e90bd91a2b011ec29.cmd"
          "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v4.2\bin\nvcc.exe" -gencode=arch=compute_20,code=\"sm_21,compute_20\" --use-local-env --cl-version 2010 -ccbin "c:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin"  -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v4.2\include"  -G  --keep-dir "Debug" -maxrregcount=0  --machine 32 --compile  -g    -Xcompiler "/EHsc /nologo /Od /Zi  /MDd  " -o "Debug\QuadPlanner.cu.obj" "C:\CUDA Projects\QuadDLL\QuadDLL\QuadPlanner.cu"
          
          C:\CUDA Projects\QuadDLL\QuadDLL>"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v4.2\bin\nvcc.exe" -gencode=arch=compute_20,code=\"sm_21,compute_20\" --use-local-env --cl-version 2010 -ccbin "c:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin"  -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v4.2\include"  -G  --keep-dir "Debug" -maxrregcount=0  --machine 32 --compile  -g    -Xcompiler "/EHsc /nologo /Od /Zi  /MDd  " -o "Debug\QuadPlanner.cu.obj" "C:\CUDA Projects\QuadDLL\QuadDLL\QuadPlanner.cu" 
          QuadPlanner.cu
-     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(101): warning : variable "predecesorIndex" was set but never used
+     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(105): warning : variable "predecesorIndex" was set but never used
          
-     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(428): warning : variable "currentNeighbors" was declared but never referenced
+     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(296): warning : variable "temp" was declared but never referenced
          
-         tmpxft_000015e4_00000000-0_QuadPlanner.cudafe1.gpu
-         tmpxft_000015e4_00000000-5_QuadPlanner.cudafe2.gpu
+     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(608): warning : variable "currentNeighbors" was declared but never referenced
+         
+         tmpxft_00001c80_00000000-0_QuadPlanner.cudafe1.gpu
+         tmpxft_00001c80_00000000-5_QuadPlanner.cudafe2.gpu
          QuadPlanner.cu
-     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(101): warning : variable "predecesorIndex" was set but never used
+     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(105): warning : variable "predecesorIndex" was set but never used
          
-     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(428): warning : variable "currentNeighbors" was declared but never referenced
+     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(296): warning : variable "temp" was declared but never referenced
          
-         tmpxft_000015e4_00000000-0_QuadPlanner.cudafe1.cpp
-         tmpxft_000015e4_00000000-11_QuadPlanner.ii
+     1>C:/CUDA Projects/QuadDLL/QuadDLL/QuadPlanner.cu(608): warning : variable "currentNeighbors" was declared but never referenced
+         
+         tmpxft_00001c80_00000000-0_QuadPlanner.cudafe1.cpp
+         tmpxft_00001c80_00000000-11_QuadPlanner.ii
        ClCompile:
          All outputs are up-to-date.
        ManifestResourceCompile:
@@ -47,4 +51,4 @@
 
 Build succeeded.
 
-Time Elapsed 00:00:05.72
+Time Elapsed 00:00:04.75

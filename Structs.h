@@ -13,4 +13,9 @@ struct QuadStruct {
 	int neighborCount;
 };
 
+struct NeighborStruct {
+	int indexInMap;
+	int quadCode;
+};
+
 #endif

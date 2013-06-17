@@ -10,20 +10,28 @@ using namespace std;
 #define EXPORT __declspec(dllexport)
 #define CALL __stdcall
 
+#define INVALID_QUAD -5.0f
+
 QuadStruct **QmapTexture, **QAgents;
 int quadCount, Qmaps = 0;
 vector<int> QagentCount;
+vector<int> availableMemoryIndexes;
 QuadStruct test;
 
 extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads, int size);
 extern "C" int* quadForCode(int code);
-extern "C" void neighborsForQuad(QuadStruct* quad, QuadStruct* neighbors);
+extern "C" int* invalidateQuadsInHash(QuadStruct quadsRemoved[], int count);
+extern "C" int* updateQuadsInHash(QuadStruct updateQuads[], int count);
+extern "C" void insertNewQuadsInHash(QuadStruct quadsInserted[], int count);
+extern "C" void propagateUpdateAfterObstacleMovement(QuadStruct* texture, int numberOfQuads);
+
 extern "C" void cleanupDevice();
 
 extern "C" void QcomputeCostsCuda(QuadStruct* mapTexture, int numberOfQuads, int locality, int agentsNumber, QuadStruct* agents, int goalNumber);
 extern "C" void clearTextureValuesQuad(QuadStruct* mapTexture, int numberOfQuads, int goalNumber);
 extern "C" EXPORT void generateTextureQuads(int _quadCount, int _maps, QuadStruct quads[]);
 extern "C" void computeNeighbors(QuadStruct* texture, int numberOfQuads);
+extern "C" void updateNeighborsToQuads(int* indexes, int size, int totalNumberOfQuads, QuadStruct** texture, int numberOfGoals, int* updateIndexes, int updateCount);
 
 extern "C" EXPORT void computeQuadNeighborsCUDA()
 {
@@ -31,20 +39,66 @@ extern "C" EXPORT void computeQuadNeighborsCUDA()
 }
 
 extern "C" EXPORT void initQuadHashMap(QuadStruct quads[], int numberOfQuads, int numberOfMaps, int hashSize)
-{
+{  
 	generateTextureQuads(numberOfQuads, numberOfMaps, quads);
 	createHashMap(quads, numberOfQuads, hashSize);
 }
 
-extern "C" EXPORT void updateTreeWithQuads(QuadStruct quadsInserted[], QuadStruct quadsRemoved[])
+extern "C" EXPORT void updateTreeWithQuads(QuadStruct quadsInserted[], int countInserted, QuadStruct quadsRemoved[], int countRemoved, QuadStruct updateQuads[], int updateCount)
 {
+	int* updateIndexes = updateQuadsInHash(updateQuads, updateCount);
+	for (int i = 0; i < updateCount; i++) {
+		for (int j = 0; j < Qmaps; j++) {
+			QmapTexture[j][updateIndexes[i]] = updateQuads[i];
+		}
+	}
 
+	int* freeIndexes = invalidateQuadsInHash(quadsRemoved, countRemoved); 
+	updateNeighborsToQuads(freeIndexes, countRemoved, quadCount, QmapTexture, Qmaps, updateIndexes, updateCount);
+
+
+	for (int i = 0; i < countRemoved; i++) {
+		for (int j = 0; j < Qmaps; j++) {
+			QmapTexture[j][freeIndexes[i]].g = INVALID_QUAD;
+		}
+		availableMemoryIndexes.push_back(freeIndexes[i]);
+	}
+
+
+	for (int i = 0; i < countInserted; i++) {
+		int index;
+		if (availableMemoryIndexes.size() > 0) {
+			index = availableMemoryIndexes.back();
+			availableMemoryIndexes.pop_back();
+		} else {
+			index = quadCount++;
+			for (int i = 0; i < Qmaps; i++) {
+				QmapTexture[i] = (QuadStruct*) realloc(QmapTexture[i], sizeof(QuadStruct)*quadCount);
+			}
+		}
+
+		quadsInserted[i].indexInMap = index;
+		for (int j = 0; j < Qmaps; j++) {
+			QmapTexture[j][index] = quadsInserted[i];
+		}
+	}
+	insertNewQuadsInHash(quadsInserted, countInserted);
+	computeQuadNeighborsCUDA();
+	for (int i = 0; i < Qmaps; i++) {
+		propagateUpdateAfterObstacleMovement(QmapTexture[i], quadCount);
+	}
 }
 
 extern "C" EXPORT void getPredecessorCodeForCode(int code, int mapNumber, int* pred)
 {
 	int *quadIndex = quadForCode(code);
 	*pred = QmapTexture[mapNumber][*quadIndex].prevQuadCode;
+}
+
+extern "C" EXPORT void getPredecessorForAgent(int agentNumber, int mapNumber, int* pred)
+{
+	QuadStruct agent = QAgents[mapNumber][agentNumber];
+	*pred = QmapTexture[mapNumber][agent.indexInMap].prevQuadCode;
 }
 
 extern "C" EXPORT void getPredecessorAtIndex(int index, int mapNumber, int* pred)
@@ -139,5 +193,13 @@ extern "C" EXPORT void quadOut(QuadStruct* quad)
 
 extern "C" EXPORT void cleanup()
 {
+	availableMemoryIndexes.clear();
 	cleanupDevice();
+}
+
+extern "C" EXPORT void CALL debugGvalues(QuadStruct quads[], int mapNumber)
+{
+	for (int i = 0; i < quadCount; i++) {
+		quads[i] = QmapTexture[mapNumber][i];
+	}
 }
