@@ -13,6 +13,11 @@ struct QuadStruct {
 	int neighborCount;
 };
 
+struct PlanStruct {
+	float g;
+	int prevQuadCode;
+};
+
 struct NeighborStruct {
 	int indexInMap;
 	int quadCode;
