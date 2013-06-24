@@ -385,14 +385,13 @@ extern "C" void propagateUpdateAfterObstacleMovement(PlanStruct* texture, int nu
 	
 }
 
-__global__ void clearTextureValuesKernel(QuadStruct* texture, int numberOfQuads, int goalNumber) {
+__global__ void clearTextureValuesKernel(PlanStruct* texture, int numberOfQuads, int goalNumber) {
 	int id = get_thread_id();
 
 	if (id < numberOfQuads) {
-		QuadStruct* state = &texture[id];
+		PlanStruct* state = &texture[id];
 		state->g = STARTING_VALUE;
 		state->prevQuadCode = 0;
-		state->inconsistent = false;
 	}
 
 }
@@ -443,25 +442,50 @@ extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads, int size)
 	cudaFree(quads_dev);
 }
 
-__global__ void retrieveQuadStruct(int* quad, int code, HashMap<int, int> *hashmap)
+__global__ void retrieveQuadStruct(int* quad, int* code, HashMap<int, int> *hashmap, int count)
 {
-	int i = get_thread_id();
-	if (i == 1) {
-		int q = *((*hashmap).valueForKey(code));
-		*quad = q; 
+	int id = get_thread_id();
+	if (id < count) {
+		int* q = (*hashmap).valueForKey(code[id]);
+		if (q == NULL) {
+			quad[id] = -1;
+		} else {
+			quad[id] = *q;
+		}
 	}
 }
 
 extern "C" int *quadForCode(int code)
 {
-	int *q_dev, *q;
+	int *q_dev, *q, *code_ptr, *code_ptr_dev;
 	q = (int*)malloc(sizeof(int));
+	code_ptr = (int*)malloc(sizeof(int));
+	*code_ptr = code;
 	cudaMalloc((void**)&q_dev, sizeof(int));
+	cudaMalloc((void**)&code_ptr_dev, sizeof(int));
+
+	cudaMemcpy(code_ptr_dev, code_ptr, sizeof(int), cudaMemcpyHostToDevice);
 	
-	retrieveQuadStruct<<<1, 512>>> (q_dev, code, hashmap);
+	retrieveQuadStruct<<<1, 512>>> (q_dev, code_ptr_dev, hashmap, 1);
 	cudaMemcpy(q, q_dev, sizeof(int), cudaMemcpyDeviceToHost);
 	cudaFree(q_dev);
+	cudaFree(code_ptr_dev);
+	free(code_ptr);
 	return q;
+}
+
+extern "C" int *indexesForCodes(int* codes, int count)
+{
+	int* codes_dev, *returnIndexesDev;
+	int* indexes = (int*)malloc(sizeof(int)*count);
+	cudaMalloc((void**)&codes_dev, sizeof(int)*count);
+	cudaMalloc((void**)&returnIndexesDev, sizeof(int)*count);
+	cudaMemcpy(codes_dev, codes, sizeof(int)*count, cudaMemcpyHostToDevice);
+
+	retrieveQuadStruct<<<1, count>>> (returnIndexesDev, codes_dev, hashmap, count);
+
+	cudaMemcpy(indexes, returnIndexesDev, sizeof(int)*count, cudaMemcpyDeviceToHost);
+	return indexes;
 }
 
 extern "C" void cleanupDevice()

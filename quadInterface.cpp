@@ -21,6 +21,7 @@ QuadStruct test;
 
 extern "C" void createHashMap(QuadStruct quads[], int numberOfQuads, int size);
 extern "C" int* quadForCode(int code);
+extern "C" int* indexesForCodes(int* codes, int count);
 extern "C" int* invalidateQuadsInHash(QuadStruct quadsRemoved[], int count);
 extern "C" int* updateQuadsInHash(QuadStruct updateQuads[], int count);
 extern "C" void insertNewQuadsInHash(QuadStruct quadsInserted[], int count);
@@ -120,7 +121,24 @@ extern "C" EXPORT void updateTreeWithQuads(QuadStruct quadsInserted[], int count
 extern "C" EXPORT void getPredecessorCodeForCode(int code, int mapNumber, int* pred)
 {
 	int *quadIndex = quadForCode(code);
-	*pred = PmapTexture[mapNumber][*quadIndex].prevQuadCode;
+	if (*quadIndex == -1) {
+		*pred = 0;
+	} else {
+		*pred = PmapTexture[mapNumber][*quadIndex].prevQuadCode;
+	}
+}
+
+extern "C" EXPORT void CALL getPredecessorsForCodes(int codes[], int count, int mapNumber, int predecessors[])
+{
+	int *indexes = indexesForCodes(codes, count);
+	for (int i = 0; i < count; i++) 
+	{
+		if (indexes[i] >= 0) {
+			predecessors[i] = PmapTexture[mapNumber][indexes[i]].prevQuadCode;
+		} else {
+			predecessors[i] = 0;
+		}
+	}
 }
 
 extern "C" EXPORT void getPredecessorForAgent(int agentNumber, int mapNumber, int* pred)
